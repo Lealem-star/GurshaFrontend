@@ -1,12 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import gurshaLogo from '../../assets/gurshalogo.png';
-import { getParticipants, getAllParticipants, getGameById, createParticipant, deleteGame } from '../../services/api';
+import { getParticipants, getGameById, createParticipant, deleteGame } from '../../services/api';
 
 // Toast notification component
 const Toast = ({ message, type, onClose }) => (
-    <div className={`fixed top-8 right-8 z-50 px-6 py-4 rounded shadow-lg text-white font-semibold transition-all duration-300 animate-fade-in-up ${type === 'error' ? 'bg-red-600' : 'bg-green-600'}`}
-        role="alert">
+    <div className={`fixed top-8 right-8 z-50 px-6 py-4 rounded shadow-lg text-white font-semibold transition-all duration-300 animate-fade-in-up ${type === 'error' ? 'bg-red-600' : 'bg-green-600'}`} role="alert">
         <div className="flex items-center gap-2">
             {type === 'error' ? (
                 <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
@@ -21,20 +20,33 @@ const Toast = ({ message, type, onClose }) => (
 
 const AddParticipantModal = ({ open, onClose, onAdded, gameId }) => {
     const [name, setName] = useState('');
-    const [photo, setPhoto] = useState(null);
     const [submitting, setSubmitting] = useState(false);
     const [showCamera, setShowCamera] = useState(false);
     const [capturedImage, setCapturedImage] = useState(null);
+    const [videoDevices, setVideoDevices] = useState([]);
+    const [selectedCamera, setSelectedCamera] = useState(null);
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
-    let stream = useRef(null);
+    const stream = useRef(null);
     const [toast, setToast] = useState(null);
 
     useEffect(() => {
-        if (showCamera && videoRef.current) {
+        const getVideoDevices = async () => {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoInputs = devices.filter(device => device.kind === 'videoinput');
+            setVideoDevices(videoInputs);
+            if (videoInputs.length > 0) {
+                setSelectedCamera(videoInputs[0].deviceId); // Select the first camera by default
+            }
+        };
+        getVideoDevices();
+    }, []);
+
+    useEffect(() => {
+        if (showCamera && videoRef.current && selectedCamera) {
             (async () => {
                 try {
-                    stream.current = await navigator.mediaDevices.getUserMedia({ video: true });
+                    stream.current = await navigator.mediaDevices.getUserMedia({ video: { deviceId: selectedCamera ? { exact: selectedCamera } : undefined } });
                     videoRef.current.srcObject = stream.current;
                     videoRef.current.play();
                 } catch (err) {
@@ -48,7 +60,7 @@ const AddParticipantModal = ({ open, onClose, onAdded, gameId }) => {
                 stream.current.getTracks().forEach(track => track.stop());
             }
         };
-    }, [showCamera]);
+    }, [showCamera, selectedCamera]);
 
     useEffect(() => {
         if (toast) {
@@ -67,44 +79,23 @@ const AddParticipantModal = ({ open, onClose, onAdded, gameId }) => {
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             const dataUrl = canvas.toDataURL('image/png');
             setCapturedImage(dataUrl);
-            setPhoto(null); // clear file input if any
-            setShowCamera(false);
+            setShowCamera(false); // Hide camera after capture
         }
+    };
+
+    const handleRetake = () => {
+        setCapturedImage(null); // Reset captured image
+        setShowCamera(true); // Show camera again
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         setSubmitting(true);
-        let photoBase64 = '';
-        if (capturedImage) {
-            photoBase64 = capturedImage;
-        } else if (photo) {
-            const reader = new FileReader();
-            reader.onloadend = async () => {
-                photoBase64 = reader.result;
-                try {
-                    await createParticipant(gameId, { name, photo: photoBase64 });
-                    setName('');
-                    setPhoto(null);
-                    setCapturedImage(null);
-                    onAdded({ name, photo: photoBase64 });
-                    onClose();
-                    setToast({ message: 'Participant added successfully!', type: 'success' });
-                } catch (err) {
-                    setToast({ message: 'Failed to add participant', type: 'error' });
-                } finally {
-                    setSubmitting(false);
-                }
-            };
-            reader.readAsDataURL(photo);
-            return;
-        }
         try {
-            await createParticipant(gameId, { name, photo: photoBase64 });
+            await createParticipant(gameId, { name, photo: capturedImage });
             setName('');
-            setPhoto(null);
             setCapturedImage(null);
-            onAdded({ name, photo: photoBase64 });
+            onAdded({ name, photo: capturedImage });
             onClose();
             setToast({ message: 'Participant added successfully!', type: 'success' });
         } catch (err) {
@@ -122,23 +113,30 @@ const AddParticipantModal = ({ open, onClose, onAdded, gameId }) => {
                 <h2 className="text-xl font-bold mb-4">Add Participant</h2>
                 <form onSubmit={handleSubmit} className="flex flex-col gap-4">
                     <input type="text" placeholder="Name" value={name} onChange={e => setName(e.target.value)} required className="border p-2 rounded" />
-                    <label className="text-sm font-medium">Photo</label>
-                    {capturedImage ? (
-                        <img src={capturedImage} alt="Captured" className="w-32 h-32 object-cover rounded mb-2 self-center" />
-                    ) : null}
+                    {capturedImage && (
+                        <div className="flex flex-col items-center">
+                            <img src={capturedImage} alt="Captured" className="w-32 h-32 object-cover rounded mb-2 self-center" />
+                            <button type="button" className="bg-yellow-500 text-white px-4 py-2 rounded font-semibold hover:bg-yellow-600 transition-all duration-200" onClick={handleRetake}>Retake Photo</button>
+                        </div>
+                    )}
                     {showCamera ? (
                         <div className="flex flex-col items-center gap-2">
                             <video ref={videoRef} className="w-48 h-36 bg-black rounded" autoPlay playsInline />
                             <canvas ref={canvasRef} style={{ display: 'none' }} />
                             <button type="button" className="bg-green-600 text-white px-4 py-2 rounded font-semibold hover:bg-green-700 transition-all duration-200" onClick={handleCapture}>Capture</button>
                             <button type="button" className="text-gray-500 underline" onClick={() => setShowCamera(false)}>Cancel</button>
+                            <select
+                                value={selectedCamera}
+                                onChange={e => setSelectedCamera(e.target.value)}
+                                className="mt-2 border p-2 rounded"
+                            >
+                                {videoDevices.map(device => (
+                                    <option key={device.deviceId} value={device.deviceId}>{device.label || `Camera ${videoDevices.indexOf(device) + 1}`}</option>
+                                ))}
+                            </select>
                         </div>
                     ) : (
-                        <div className="flex flex-col gap-2">
-                            {(!capturedImage && !showCamera) && (
-                                <button type="button" className="bg-blue-500 text-white px-4 py-2 rounded font-semibold hover:bg-blue-700 transition-all duration-200" onClick={() => setShowCamera(true)}>Take Photo</button>
-                            )}
-                        </div>
+                        <button type="button" className="bg-blue-500 text-white px-4 py-2 rounded font-semibold hover:bg-blue-700 transition-all duration-200" onClick={() => setShowCamera(true)}>Take Photo</button>
                     )}
                     <button type="submit" className="bg-blue-600 text-white py-2 rounded font-semibold hover:bg-blue-700 transition-all duration-200" disabled={submitting}>{submitting ? 'Adding...' : 'Add Participant'}</button>
                 </form>
@@ -147,7 +145,6 @@ const AddParticipantModal = ({ open, onClose, onAdded, gameId }) => {
         </div>
     );
 };
-
 
 // Replace the marquee/scrolling participant images with a fixed-width, auto-rotating carousel
 const ParticipantMarquee = ({ participants }) => {
@@ -373,4 +370,4 @@ const GameDashboard = () => {
     );
 };
 
-export default GameDashboard; 
+export default GameDashboard;
